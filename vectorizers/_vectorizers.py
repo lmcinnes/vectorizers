@@ -25,6 +25,10 @@ from collections import defaultdict
 import scipy.linalg
 import scipy.stats
 import scipy.sparse
+
+import dask
+import dask.bag
+
 from typing import Union, Sequence, AnyStr
 
 import re
@@ -92,15 +96,21 @@ def construct_token_dictionary_and_frequency(token_sequence, token_dictionary=No
     n_tokens: int
         The total number of tokens in the sequence
     """
-    n_tokens = len(token_sequence)
+    if not type(token_sequence) == dask.bag.Bag:
+        dask_token_sequence = dask.bag.from_sequence(token_sequence)
+    else:
+        dask_token_sequence = token_sequence
+
     if token_dictionary is None:
-        unique_tokens = sorted(list(set(token_sequence)))
+        unique_tokens = sorted(dask_token_sequence.distinct().compute())
         token_dictionary = dict(zip(unique_tokens, range(len(unique_tokens))))
 
-    index_list = [
-        token_dictionary[token] for token in token_sequence if token in token_dictionary
-    ]
-    token_counts = np.bincount(index_list).astype(np.float32)
+    filtered_tokens = dask_token_sequence.filter(lambda token: token in token_dictionary)
+    token_counts = filtered_tokens.frequencies()
+    n_tokens = filtered_tokens.count()
+
+    token_counts, n_tokens = dask.compute(token_counts, n_tokens)
+    token_counts = np.array([count for token, count in sorted(token_counts)])
 
     token_frequency = token_counts / n_tokens
 
