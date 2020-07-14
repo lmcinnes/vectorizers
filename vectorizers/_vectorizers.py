@@ -105,7 +105,9 @@ def construct_token_dictionary_and_frequency(token_sequence, token_dictionary=No
         unique_tokens = sorted(dask_token_sequence.distinct().compute())
         token_dictionary = dict(zip(unique_tokens, range(len(unique_tokens))))
 
-    filtered_tokens = dask_token_sequence.filter(lambda token: token in token_dictionary)
+    filtered_tokens = dask_token_sequence.filter(
+        lambda token: token in token_dictionary
+    )
     token_counts = filtered_tokens.frequencies()
     n_tokens = filtered_tokens.count()
 
@@ -566,18 +568,19 @@ def preprocess_token_sequences(
         index: token for token, index in token_dictionary.items()
     }
 
-    result_sequences = List()
-    for sequence in token_sequences:
-        result_sequences.append(
-            np.array(
-                [
-                    token_dictionary[token]
-                    for token in sequence
-                    if token in token_dictionary
-                ],
-                dtype=np.int64,
-            )
+    def filtered_map(token_seq):
+        return np.array(
+            [
+                token_dictionary[token]
+                for token in token_seq
+                if token in token_dictionary
+            ],
+            dtype=np.int64,
         )
+
+    if not type(token_sequences) == dask.bag.Bag:
+        token_sequences = dask.bag.from_sequence(token_sequences)
+    result_sequences = token_sequences.map(filtered_map)
 
     return (
         result_sequences,
@@ -784,29 +787,33 @@ def skip_grams_matrix_coo_data(
     data: array
         Value data for a COO format sparse matrix representation
     """
-    result_row = []
-    result_col = []
-    result_data = []
-
     n_unique_tokens = len(token_dictionary)
 
-    for row_idx in range(len(list_of_token_sequences)):
-        skip_gram_data = build_skip_grams(
-            list_of_token_sequences[row_idx],
-            window_function,
-            kernel_function,
-            window_args,
-            kernel_args,
-        )
-        for i in range(skip_gram_data.shape[0]):
-            skip_gram = skip_gram_data[i]
-            result_row.append(row_idx)
-            result_col.append(
-                np.int32(skip_gram[0]) * n_unique_tokens + np.int32(skip_gram[1])
-            )
-            result_data.append(skip_gram[2])
+    if not type(list_of_token_sequences) == dask.bag.Bag:
+        list_of_token_sequences = dask.bag.from_sequence(list_of_token_sequences)
 
-    return np.asarray(result_row), np.asarray(result_col), np.asarray(result_data)
+    list_of_skip_gram_data = list_of_token_sequences.map(
+        build_skip_grams, window_function, kernel_function, window_args, kernel_args,
+    )
+
+    def process_skip_gram_data(skip_gram_data):
+        result_col = skip_gram_data[:, 0].astype(
+            np.int32
+        ) * n_unique_tokens + skip_gram_data[:, 1].astype(np.int32)
+        result_val = skip_gram_data[:, 2]
+        return (result_col, result_val)
+
+    list_of_matrix_data = list_of_skip_gram_data.map(process_skip_gram_data).compute()
+    result_row = np.concatenate(
+        [
+            np.full(len(x[0]), i, dtype=np.int32)
+            for i, x in enumerate(list_of_matrix_data)
+        ]
+    )
+    result_col = np.concatenate([x[0] for x in list_of_matrix_data])
+    result_data = np.concatenate([x[1] for x in list_of_matrix_data])
+
+    return result_row, result_col, result_data
 
 
 @numba.njit(nogil=True)
@@ -992,23 +999,22 @@ def token_cooccurrence_matrix(
     if n_unique_tokens == 0:
         raise ValueError("Token dictionary is empty; try using less extreme contraints")
 
-    cooccurrence_matrix = scipy.sparse.coo_matrix(
-        (n_unique_tokens, n_unique_tokens), dtype=np.float32
-    )
-    n_chunks = (len(token_sequences) // chunk_size) + 1
+    if not type(token_sequences) == dask.bag.Bag:
+        dask_token_sequences = dask.bag.from_sequence(token_sequences, npartitions=100)
+    else:
+        dask_token_sequences = token_sequences.repartition(npartitions=100)
 
-    for chunk_index in range(n_chunks):
-        chunk_start = chunk_index * chunk_size
-        chunk_end = min(len(token_sequences), chunk_start + chunk_size)
-
+    def create_cooc_matrix(token_sequence, n_unique_tokens):
+        sequences = numba.typed.List.empty_list(numba.int64[::1])
+        sequences.append(token_sequence)
         raw_coo_data = sequence_skip_grams(
-            token_sequences[chunk_start:chunk_end],
+            sequences,
             window_function,
             kernel_function,
             window_args,
             kernel_args,
         )
-        cooccurrence_matrix += scipy.sparse.coo_matrix(
+        result = scipy.sparse.coo_matrix(
             (
                 raw_coo_data.T[2],
                 (
@@ -1019,7 +1025,41 @@ def token_cooccurrence_matrix(
             shape=(n_unique_tokens, n_unique_tokens),
             dtype=np.float32,
         )
-        cooccurrence_matrix.sum_duplicates()
+        result.sum_duplicates()
+        return result
+
+    cooccurrence_matrix = (
+        dask_token_sequences.map(create_cooc_matrix, n_unique_tokens).sum().compute()
+    )
+
+    # cooccurrence_matrix = scipy.sparse.coo_matrix(
+    #     (n_unique_tokens, n_unique_tokens), dtype=np.float32
+    # )
+    # n_chunks = (len(token_sequences) // chunk_size) + 1
+    #
+    # for chunk_index in range(n_chunks):
+    #     chunk_start = chunk_index * chunk_size
+    #     chunk_end = min(len(token_sequences), chunk_start + chunk_size)
+    #
+    #     raw_coo_data = sequence_skip_grams(
+    #         token_sequences[chunk_start:chunk_end],
+    #         window_function,
+    #         kernel_function,
+    #         window_args,
+    #         kernel_args,
+    #     )
+    #     cooccurrence_matrix += scipy.sparse.coo_matrix(
+    #         (
+    #             raw_coo_data.T[2],
+    #             (
+    #                 raw_coo_data.T[0].astype(np.int64),
+    #                 raw_coo_data.T[1].astype(np.int64),
+    #             ),
+    #         ),
+    #         shape=(n_unique_tokens, n_unique_tokens),
+    #         dtype=np.float32,
+    #     )
+    #     cooccurrence_matrix.sum_duplicates()
 
     if window_orientation == "before":
         cooccurrence_matrix = cooccurrence_matrix.transpose()
@@ -1247,7 +1287,7 @@ class TokenCooccurrenceVectorizer(BaseEstimator, TransformerMixin):
         kernel_function="flat",
         window_radius=5,
         window_orientation="directional",
-        chunk_size=1<<20,
+        chunk_size=1 << 20,
         validate_data=True,
     ):
         self.token_dictionary = token_dictionary
