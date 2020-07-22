@@ -1,3 +1,4 @@
+import dask.bag
 import numpy as np
 import numba
 import scipy.stats
@@ -92,17 +93,20 @@ def validate_homogeneous_token_types(data):
     -------
     valid: True if valid; will raise an exception if tokens are heterogeneous.
     """
-    types = Counter([type(x) for x in flatten(data)])
-    if len(types) > 1:
-        warn(f"Non-homogeneous token types encountered. Token type counts are: {types}")
-        raise ValueError(
-            "Heterogeneous token types are not supported -- please cast "
-            "your tokens to a single type. You can use "
-            '"X = vectorizers.cast_tokens_to_string(X)" to achieve '
-            "this."
-        )
+    if type(data) == dask.bag.Bag:
+        return True # TODO: Argh; this is bad -- not sure what the correct approach is yet
     else:
-        return True
+        types = Counter([type(x) for x in flatten(data)])
+        if len(types) > 1:
+            warn(f"Non-homogeneous token types encountered. Token type counts are: {types}")
+            raise ValueError(
+                "Heterogeneous token types are not supported -- please cast "
+                "your tokens to a single type. You can use "
+                '"X = vectorizers.cast_tokens_to_string(X)" to achieve '
+                "this."
+            )
+        else:
+            return True
 
 
 def gmm_component_likelihood(

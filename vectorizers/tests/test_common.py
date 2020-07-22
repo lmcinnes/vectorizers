@@ -4,6 +4,7 @@ from sklearn.utils.estimator_checks import check_estimator
 
 import scipy.sparse
 import numpy as np
+import dask.bag
 
 from vectorizers import TokenCooccurrenceVectorizer
 from vectorizers import NgramVectorizer
@@ -191,12 +192,12 @@ def test_equality_of_CooccurrenceVectorizers(
     )
     assert np.allclose(
         tree_model.fit_transform(seq_tree_sequence).toarray(),
-        seq_model.fit_transform(text_token_data_permutation).toarray(),
+        seq_model.fit_transform(dask.bag.from_sequence(text_token_data_permutation, npartitions=1)).toarray(),
     )
 
     assert np.allclose(
         tree_model.transform(seq_tree_sequence).toarray(),
-        seq_model.transform(text_token_data_permutation).toarray(),
+        seq_model.transform(dask.bag.from_sequence(text_token_data_permutation, npartitions=1)).toarray(),
     )
 
 

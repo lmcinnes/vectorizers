@@ -533,6 +533,12 @@ def preprocess_token_sequences(
         total_tokens,
     ) = construct_token_dictionary_and_frequency(flat_sequence, token_dictionary)
 
+    if type(token_sequences) == dask.bag.Bag:
+        # TODO: this is bad to compute here!
+        n_documents = token_sequences.count().compute()
+    else:
+        n_documents = len(token_sequences)
+
     if token_dictionary is None:
         if {
             min_document_frequency,
@@ -561,7 +567,7 @@ def preprocess_token_sequences(
             min_document_occurrences=min_document_occurrences,
             max_document_occurrences=max_document_occurrences,
             total_tokens=total_tokens,
-            total_documents=len(token_sequences),
+            total_documents=n_documents,
         )
 
     inverse_token_dictionary = {
@@ -1004,15 +1010,15 @@ def token_cooccurrence_matrix(
     else:
         dask_token_sequences = token_sequences.repartition(npartitions=100)
 
-    def create_cooc_matrix(token_sequence, n_unique_tokens):
+    def create_cooc_matrix(token_sequences, n_unique_tokens):
+        if len(token_sequences) == 0:
+            return [scipy.sparse.coo_matrix(
+                (n_unique_tokens, n_unique_tokens), dtype=np.float32
+            )]
         sequences = numba.typed.List.empty_list(numba.int64[::1])
-        sequences.append(token_sequence)
+        sequences.extend(token_sequences)
         raw_coo_data = sequence_skip_grams(
-            sequences,
-            window_function,
-            kernel_function,
-            window_args,
-            kernel_args,
+            sequences, window_function, kernel_function, window_args, kernel_args,
         )
         result = scipy.sparse.coo_matrix(
             (
@@ -1026,10 +1032,12 @@ def token_cooccurrence_matrix(
             dtype=np.float32,
         )
         result.sum_duplicates()
-        return result
+        return [result]
 
     cooccurrence_matrix = (
-        dask_token_sequences.map(create_cooc_matrix, n_unique_tokens).sum().compute()
+        dask_token_sequences.map_partitions(create_cooc_matrix, n_unique_tokens)
+        .sum()
+        .compute()
     )
 
     # cooccurrence_matrix = scipy.sparse.coo_matrix(
@@ -1315,7 +1323,10 @@ class TokenCooccurrenceVectorizer(BaseEstimator, TransformerMixin):
         if self.validate_data:
             validate_homogeneous_token_types(X)
 
-        flat_sequences = flatten(X)
+        if type(X) == dask.bag.Bag:
+            flat_sequences = X.flatten()
+        else:
+            flat_sequences = flatten(X)
         (
             token_sequences,
             self.token_label_dictionary_,
@@ -1417,7 +1428,10 @@ class TokenCooccurrenceVectorizer(BaseEstimator, TransformerMixin):
         if self.validate_data:
             validate_homogeneous_token_types(X)
 
-        flat_sequences = flatten(X)
+        if type(X) == dask.bag.Bag:
+            flat_sequences = X.flatten()
+        else:
+            flat_sequences = flatten(X)
         (
             token_sequences,
             column_label_dictionary,
