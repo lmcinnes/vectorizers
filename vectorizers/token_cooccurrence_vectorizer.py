@@ -853,7 +853,7 @@ def em_update_matrix(
                             prior_indptr[target_gram_ind]
                             + context_ind[i + win_offset[w]]
                         ]
-                        / (token_prob[context] + token_prob[target_gram_ind])
+                        # / (token_prob[context] + token_prob[target_gram_ind])
                     )
                 else:
                     window_posterior[i + win_offset[w]] = 0
