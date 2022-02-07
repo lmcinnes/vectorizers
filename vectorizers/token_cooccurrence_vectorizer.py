@@ -730,6 +730,8 @@ def multi_token_cooccurrence_matrix(
     cooccurrence_matrix = cooccurrence_matrix.tocsr()
 
     if n_iter > 0 or epsilon > 0:
+        token_prob = np.squeeze(np.array(cooccurrence_matrix.sum(axis=0)))
+        token_prob /= token_prob.sum()
         cooccurrence_matrix = normalizer(cooccurrence_matrix, axis=0, norm="l1").tocsr()
         cooccurrence_matrix.data[cooccurrence_matrix.data < epsilon] = 0
         cooccurrence_matrix.eliminate_zeros()
@@ -753,6 +755,7 @@ def multi_token_cooccurrence_matrix(
                 array_to_tuple=array_to_tuple,
                 window_normalizer=window_normalizer,
                 multi_labelled_tokens=multi_labelled_tokens,
+                token_prob=token_prob,
             )
             for chunk_start, chunk_end in generate_chunk_boundaries(
                 token_sequences, chunk_size=chunk_size
@@ -761,6 +764,8 @@ def multi_token_cooccurrence_matrix(
         new_data = dask.delayed(sum)(new_data_per_chunk)
         new_data = new_data.compute()
         cooccurrence_matrix.data = new_data
+        token_prob = np.squeeze(np.array(cooccurrence_matrix.sum(axis=0)))
+        token_prob /= token_prob.sum()
         cooccurrence_matrix = normalizer(cooccurrence_matrix, axis=0, norm="l1").tocsr()
         cooccurrence_matrix.data[cooccurrence_matrix.data < epsilon] = 0
         cooccurrence_matrix.eliminate_zeros()
@@ -779,6 +784,7 @@ def em_update_matrix(
     windows,
     kernels,
     window_normalizer,
+    token_prob,
 ):
     """
     Updated the csr matrix from one round of EM on the given (hstack of) n
@@ -844,6 +850,7 @@ def em_update_matrix(
                             prior_indptr[target_gram_ind]
                             + context_ind[i + win_offset[w]]
                         ]
+                        / (token_prob[context] + token_prob[target_gram_ind])
                     )
                 else:
                     window_posterior[i + win_offset[w]] = 0
@@ -877,6 +884,7 @@ def em_cooccurrence_iteration(
     prior_indices,
     prior_indptr,
     prior_data,
+    token_prob,
     ngram_dictionary=MOCK_DICT,
     ngram_size=1,
     array_to_tuple=pair_to_tuple,
@@ -985,6 +993,7 @@ def em_cooccurrence_iteration(
                         windows,
                         kernels,
                         window_normalizer,
+                        token_prob,
                     )
 
     else:

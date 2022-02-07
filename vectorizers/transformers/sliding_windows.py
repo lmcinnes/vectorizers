@@ -6,7 +6,7 @@ from sklearn.utils.validation import check_is_fitted
 from vectorizers._window_kernels import _SLIDING_WINDOW_KERNELS, _SLIDING_WINDOW_FUNCTION_KERNELS
 
 
-@numba.njit(nogil=True)
+#@numba.njit(nogil=True)
 def sliding_windows(
     sequence,
     width,

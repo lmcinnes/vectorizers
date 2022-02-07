@@ -184,8 +184,8 @@ _SLIDING_WINDOW_KERNELS = {
 # Copied from the SciPy implementation
 @numba.njit()
 def binom(n, k):
-    n = int(n)
-    k = int(k)
+    n = np.int64(n)
+    k = np.int64(k)
 
     if k > n or n < 0 or k < 0:
         return 0
@@ -193,13 +193,32 @@ def binom(n, k):
     m = n + 1
     nterms = min(k, n - k)
 
-    numerator = 1
-    denominator = 1
+    result = np.uint64(1)
     for j in range(1, nterms + 1):
-        numerator *= m - j
-        denominator *= j
+        result *= m - j
+        result //= j
 
-    return numerator // denominator
+    return result
+
+@numba.njit()
+def log_binom(n ,k):
+    n = np.int64(n)
+    k = np.int64(k)
+
+    if k > n or n < 0 or k < 0:
+        return 0
+
+    m = n + 1
+    nterms = min(k, n - k)
+
+    # Large case
+    result = np.float64(0)
+    for j in range(1, nterms + 1):
+        result += np.log(m - j)
+        result -= np.log(j)
+
+    return result
+
 
 # A couple of changepoint based kernels that can be useful. The goal
 # is to detect changepoints in seuquences of count of time interval
@@ -236,13 +255,14 @@ def inter_arrival_changepoint_kernel(alpha=1.0, beta=1):
         model_window = 1.0 / (window[:-1] + EPSILON)
         observation = 1.0 / (window[-1] + EPSILON)
         alpha_prime = alpha + model_window.sum()
-        beta_prime = beta + len(model_window)
+        beta_prime = beta + window.sum()
         nb_r = alpha_prime
         nb_p = 1.0 / (1.0 + beta_prime)
 
-        prob = binom(observation + nb_r - 1, observation) * (1 - nb_p) ** nb_r * nb_p ** observation
-
-        return np.array([-np.log(prob)])
+        # prob = binom(observation + nb_r - 1, observation) * (1 - nb_p) ** nb_r * nb_p ** observation
+        result = log_binom(observation + nb_r - 1, observation) + nb_r * np.log(1 - nb_p) + observation * np.log(nb_p)
+        return np.array([-result])
+        # return np.array([-np.log(prob)])
 
     return _kernel
 
