@@ -1073,6 +1073,7 @@ def em_cooccurrence_iteration(
                         windows,
                         kernels,
                         window_normalizer,
+                        token_prob,
                     )
         else:
             for d_i, seq in enumerate(token_sequences):
@@ -1107,6 +1108,7 @@ def em_cooccurrence_iteration(
                         windows,
                         kernels,
                         window_normalizer,
+                        token_prob,
                     )
 
     return posterior_data
