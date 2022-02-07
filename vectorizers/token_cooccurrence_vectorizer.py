@@ -735,6 +735,8 @@ def multi_token_cooccurrence_matrix(
         cooccurrence_matrix = normalizer(cooccurrence_matrix, axis=0, norm="l1").tocsr()
         cooccurrence_matrix.data[cooccurrence_matrix.data < epsilon] = 0
         cooccurrence_matrix.eliminate_zeros()
+    else:
+        token_prob = np.ones(cooccurrence_matrix.shape[1])
 
     # Do the EM
     for iter in range(n_iter):
@@ -846,6 +848,7 @@ def em_update_matrix(
                 ):
                     window_posterior[i + win_offset[w]] = (
                         kernels[w][i]
+                        * token_prob[context]
                         * prior_data[
                             prior_indptr[target_gram_ind]
                             + context_ind[i + win_offset[w]]
